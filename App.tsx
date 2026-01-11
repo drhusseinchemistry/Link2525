@@ -5,51 +5,49 @@ import { analyzeScreen } from './services/geminiService';
 
 const App: React.FC = () => {
   const [myId, setMyId] = useState<string>('');
-  const [targetId, setTargetId] = useState<string>(''); // The ID we want to send video TO
+  const [targetId, setTargetId] = useState<string>('');
   const [status, setStatus] = useState<string>('جارێ نییە...');
-  const [role, setRole] = useState<'VIEWER' | 'STREAMER'>('VIEWER'); 
-  // VIEWER: The one who wants to SEE.
-  // STREAMER: The one who has the CAMERA.
+  const [role, setRole] = useState<'VIEWER' | 'STREAMER'>('VIEWER');
   
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  
+  // NEW: Store the stream in state to ensure it renders correctly
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peerRef = useRef<Peer | null>(null);
 
   useEffect(() => {
-    // 1. Check URL to determine Role
     const params = new URLSearchParams(window.location.search);
-    const hostId = params.get('host'); // 'host' here means the person WAITING for video
+    const hostId = params.get('host');
     
     const newPeer = new Peer();
 
     newPeer.on('open', (id) => {
       setMyId(id);
       if (hostId) {
-        // I opened a link, so I am the STREAMER (I show my camera)
         setRole('STREAMER');
         setTargetId(hostId);
         setStatus("داواکاری بۆ کردنەوەی کامێرا");
       } else {
-        // I opened the app, so I am the VIEWER (I want to see)
         setRole('VIEWER');
         setStatus("لینک بنێرە بۆ ئەوەی کامێرا ببینیت");
       }
     });
 
-    // 2. VIEWER Logic: Wait for them to call me with video
+    // VIEWER Logic: Receive Video
     newPeer.on('call', (call) => {
-      console.log("Receiving call (video stream)...");
-      call.answer(); // Answer without sending my own stream
+      console.log("Receiving call...");
+      call.answer(); 
       
       call.on('stream', (remoteStream) => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = remoteStream;
-          videoRef.current.play().catch(e => console.error(e));
-        }
+        console.log("Stream received with tracks:", remoteStream.getTracks());
+        // 1. Save stream to state first
+        setActiveStream(remoteStream);
+        // 2. Then show the UI
         setIsConnected(true);
         setStatus("پەیوەست کرا!");
       });
@@ -68,7 +66,15 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // -- STREAMER LOGIC: Accept request and send camera --
+  // NEW: Watch for connection and stream, then attach to video element
+  useEffect(() => {
+    if (isConnected && activeStream && videoRef.current) {
+      console.log("Attaching stream to video element");
+      videoRef.current.srcObject = activeStream;
+      videoRef.current.play().catch(e => console.error("Autoplay error:", e));
+    }
+  }, [isConnected, activeStream]);
+
   const acceptAndStream = async () => {
     if (!peerRef.current || !targetId) return;
     
@@ -76,29 +82,27 @@ const App: React.FC = () => {
     setStatus("کردنەوەی کامێرا...");
 
     try {
-      // 1. Get Camera
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: 'environment' }, 
         audio: true 
       });
 
-      // 2. Show local preview (optional, but good for user)
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.muted = true; // Mute local to avoid feedback
-      }
+      // Save local stream
+      setActiveStream(stream);
 
-      // 3. Call the Viewer
+      // Call the Viewer
       const call = peerRef.current.call(targetId, stream);
       
       call.on('close', () => {
         setIsConnected(false);
         setStatus("پەیوەندی پچڕا");
+        setActiveStream(null);
       });
 
       setIsConnected(true);
       setStatus("کامێرا نێردرا!");
     } catch (err) {
+      console.error(err);
       alert("تکایە ڕێگە بە کامێرا بدە.");
       setLoading(false);
     }
@@ -131,7 +135,7 @@ const App: React.FC = () => {
     setAiResponse(text || "هیچ دیار نییە");
   };
 
-  // --- RENDER: CONNECTED MODE (VIDEO ON) ---
+  // --- RENDER: CONNECTED MODE ---
   if (isConnected) {
     return (
       <div className="h-[100dvh] w-full bg-black relative flex flex-col overflow-hidden">
@@ -139,14 +143,13 @@ const App: React.FC = () => {
           ref={videoRef} 
           autoPlay 
           playsInline 
-          // If I am streamer, mute myself. If viewer, unmute to hear them.
-          muted={role === 'STREAMER'} 
-          className={`w-full h-full object-contain ${role === 'STREAMER' ? 'opacity-50 scale-x-[-1]' : ''}`} // Mirror effect for streamer
+          muted={role === 'STREAMER'} // Mute only for the one holding the camera
+          className={`w-full h-full object-contain ${role === 'STREAMER' ? 'opacity-50 scale-x-[-1]' : ''}`}
         />
         
         {role === 'STREAMER' && (
              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <p className="bg-red-600/80 text-white px-6 py-2 rounded-full font-bold animate-pulse">
+                <p className="bg-red-600/80 text-white px-6 py-2 rounded-full font-bold animate-pulse backdrop-blur-md">
                     <i className="fas fa-circle text-[10px] ml-2"></i> پەخشی ڕاستەوخۆ
                 </p>
              </div>
@@ -188,7 +191,6 @@ const App: React.FC = () => {
         </div>
 
         {role === 'VIEWER' ? (
-            // --- VIEWER UI (Create Link) ---
             <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-6 shadow-2xl">
                 <div className="w-20 h-20 bg-blue-600/20 text-blue-500 rounded-full flex items-center justify-center mx-auto ring-4 ring-blue-500/10">
                     <i className="fas fa-eye text-3xl"></i>
@@ -211,7 +213,6 @@ const App: React.FC = () => {
                 </div>
             </div>
         ) : (
-            // --- STREAMER UI (Accept Request) ---
             <div className="bg-slate-900 border border-red-500/20 rounded-3xl p-6 space-y-6 shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-red-500"></div>
                 
@@ -240,7 +241,6 @@ const App: React.FC = () => {
                         </>
                     )}
                 </button>
-                <p className="text-[10px] text-slate-500">بە داگرتنی ئەمە، کامێراکەت دەکرێتەوە</p>
             </div>
         )}
 
