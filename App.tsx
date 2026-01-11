@@ -13,7 +13,7 @@ const App: React.FC = () => {
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   
-  // NEW: Store the stream in state to ensure it renders correctly
+  // Store the stream in state to ensure it renders correctly
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -45,9 +45,7 @@ const App: React.FC = () => {
       
       call.on('stream', (remoteStream) => {
         console.log("Stream received with tracks:", remoteStream.getTracks());
-        // 1. Save stream to state first
         setActiveStream(remoteStream);
-        // 2. Then show the UI
         setIsConnected(true);
         setStatus("پەیوەست کرا!");
       });
@@ -66,7 +64,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // NEW: Watch for connection and stream, then attach to video element
+  // Watch for connection and stream, then attach to video element
   useEffect(() => {
     if (isConnected && activeStream && videoRef.current) {
       console.log("Attaching stream to video element");
@@ -82,8 +80,9 @@ const App: React.FC = () => {
     setStatus("کردنەوەی کامێرا...");
 
     try {
+      // CHANGED: Use 'user' for Front Camera
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' }, 
+        video: { facingMode: 'user' }, 
         audio: true 
       });
 
@@ -143,15 +142,16 @@ const App: React.FC = () => {
           ref={videoRef} 
           autoPlay 
           playsInline 
-          muted={role === 'STREAMER'} // Mute only for the one holding the camera
-          className={`w-full h-full object-contain ${role === 'STREAMER' ? 'opacity-50 scale-x-[-1]' : ''}`}
+          muted={role === 'STREAMER'} 
+          className={`w-full h-full object-cover ${role === 'STREAMER' ? 'opacity-50 scale-x-[-1]' : ''}`}
         />
         
+        {/* CHANGED: Show "سەرکەفتن" ONLY for the Streamer (User who accepted) */}
         {role === 'STREAMER' && (
-             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <p className="bg-red-600/80 text-white px-6 py-2 rounded-full font-bold animate-pulse backdrop-blur-md">
-                    <i className="fas fa-circle text-[10px] ml-2"></i> پەخشی ڕاستەوخۆ
-                </p>
+             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                <div className="bg-green-500 text-white px-8 py-6 rounded-3xl font-bold text-3xl animate-bounce shadow-[0_0_50px_rgba(34,197,94,0.5)] border-4 border-white/20 backdrop-blur-sm">
+                    سەرکەفتن ✅
+                </div>
              </div>
         )}
 
