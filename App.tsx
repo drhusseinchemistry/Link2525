@@ -5,11 +5,13 @@ import { analyzeScreen } from './services/geminiService';
 
 const App: React.FC = () => {
   const [myId, setMyId] = useState<string>('');
-  const [remoteId, setRemoteId] = useState<string>('');
-  const [status, setStatus] = useState<string>('سەرەتا هەڵبژێرە');
-  const [isHost, setIsHost] = useState<boolean>(false);
+  const [targetId, setTargetId] = useState<string>(''); // The ID we want to send video TO
+  const [status, setStatus] = useState<string>('جارێ نییە...');
+  const [role, setRole] = useState<'VIEWER' | 'STREAMER'>('VIEWER'); 
+  // VIEWER: The one who wants to SEE.
+  // STREAMER: The one who has the CAMERA.
+  
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [stream, setStream] = useState<MediaStream | null>(null);
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -17,36 +19,46 @@ const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peerRef = useRef<Peer | null>(null);
 
-  // Initialize Peer on Load
   useEffect(() => {
-    // Check URL for room ID (One Click feature)
+    // 1. Check URL to determine Role
     const params = new URLSearchParams(window.location.search);
-    const roomFromUrl = params.get('room');
-    if (roomFromUrl) {
-      setRemoteId(roomFromUrl);
-    }
-
-    const newPeer = new Peer();
+    const hostId = params.get('host'); // 'host' here means the person WAITING for video
     
+    const newPeer = new Peer();
+
     newPeer.on('open', (id) => {
       setMyId(id);
-      if (roomFromUrl) {
-        setStatus('ئامادەیە بۆ پەیوەستبوون');
+      if (hostId) {
+        // I opened a link, so I am the STREAMER (I show my camera)
+        setRole('STREAMER');
+        setTargetId(hostId);
+        setStatus("داواکاری بۆ کردنەوەی کامێرا");
       } else {
-        setStatus('ئامادەیە');
+        // I opened the app, so I am the VIEWER (I want to see)
+        setRole('VIEWER');
+        setStatus("لینک بنێرە بۆ ئەوەی کامێرا ببینیت");
       }
     });
 
-    newPeer.on('call', async (call) => {
-      // Receiving a call (Viewer Side usually, but bi-directional possible)
-      const answerStream = new MediaStream(); // Answer with empty or audio
-      call.answer(answerStream); 
+    // 2. VIEWER Logic: Wait for them to call me with video
+    newPeer.on('call', (call) => {
+      console.log("Receiving call (video stream)...");
+      call.answer(); // Answer without sending my own stream
+      
       call.on('stream', (remoteStream) => {
-        setStream(remoteStream);
-        if (videoRef.current) videoRef.current.srcObject = remoteStream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+          videoRef.current.play().catch(e => console.error(e));
+        }
         setIsConnected(true);
-        setStatus('پەیوەست کرا!');
+        setStatus("پەیوەست کرا!");
       });
+    });
+
+    newPeer.on('error', (err) => {
+      console.error(err);
+      setStatus("هەڵە: " + err.type);
+      setLoading(false);
     });
 
     peerRef.current = newPeer;
@@ -56,211 +68,181 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // -- HOST FUNCTIONS --
-
-  const startHosting = async () => {
-    setIsHost(true);
-    setLoading(true);
-    setStatus('دەستپێکردنی کامێرا/شاشە...');
-
-    let localStream: MediaStream | null = null;
-    let type = 'camera';
-
-    // 1. Try Screen Share
-    try {
-      if (navigator.mediaDevices && 'getDisplayMedia' in navigator.mediaDevices) {
-        localStream = await (navigator.mediaDevices as any).getDisplayMedia({ 
-            video: { cursor: "always" }, audio: true 
-        });
-        type = 'screen';
-      }
-    } catch (e) {
-      console.log("Screen share failed, fallback to camera");
-    }
-
-    // 2. Fallback to Camera
-    if (!localStream) {
-       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
-        type = 'camera';
-       } catch(err) {
-         alert("ناتوانرێت کامێرا یان شاشە بکرێتەوە.");
-         setLoading(false);
-         setIsHost(false);
-         return;
-       }
-    }
-
-    setStream(localStream);
-    if (videoRef.current) videoRef.current.srcObject = localStream;
+  // -- STREAMER LOGIC: Accept request and send camera --
+  const acceptAndStream = async () => {
+    if (!peerRef.current || !targetId) return;
     
-    // Setup listener for incoming connections asking for this stream
-    if (peerRef.current) {
-        peerRef.current.on('connection', (conn) => {
-            // Data connection opened
-        });
-        
-        // Wait for them to call us, or we wait (Logic simplified: Viewer calls Host)
-        // Actually, peerJS 'call' event handles the stream transfer.
-        setStatus(type === 'screen' ? 'شاشە کراوەیە. چاوەڕێی بینەر...' : 'کامێرا کراوەیە. چاوەڕێی بینەر...');
+    setLoading(true);
+    setStatus("کردنەوەی کامێرا...");
+
+    try {
+      // 1. Get Camera
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' }, 
+        audio: true 
+      });
+
+      // 2. Show local preview (optional, but good for user)
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.muted = true; // Mute local to avoid feedback
+      }
+
+      // 3. Call the Viewer
+      const call = peerRef.current.call(targetId, stream);
+      
+      call.on('close', () => {
+        setIsConnected(false);
+        setStatus("پەیوەندی پچڕا");
+      });
+
+      setIsConnected(true);
+      setStatus("کامێرا نێردرا!");
+    } catch (err) {
+      alert("تکایە ڕێگە بە کامێرا بدە.");
+      setLoading(false);
     }
-    setLoading(false);
-    setIsConnected(true); // Locally connected to stream
   };
 
   const copyLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}?room=${myId}`;
-    navigator.clipboard.writeText(url);
-    alert("لینک کۆپی کرا! بنێرە بۆ مۆبایلەکەی تر.");
+    const url = `${window.location.origin}${window.location.pathname}?host=${myId}`;
+    if (navigator.share) {
+        navigator.share({
+            title: 'LinkUp Direct',
+            text: 'تکایە ئەم لینکە بکەرەوە بۆ ئەوەی کامێراکەت ببینم',
+            url: url
+        }).catch(console.error);
+    } else {
+        navigator.clipboard.writeText(url);
+        alert("لینک کۆپی کرا! بنێرە بۆ ئەو کەسەی دەتەوێت کامێرای ببینیت.");
+    }
   };
-
-  // -- VIEWER FUNCTIONS --
-
-  const connectToHost = () => {
-    if (!peerRef.current || !remoteId) return;
-    setLoading(true);
-    setStatus('پەیوەست دەبێت...');
-
-    // Call the host
-    const call = peerRef.current.call(remoteId, new MediaStream()); // Send empty stream to initiate
-    
-    call.on('stream', (remoteStream) => {
-      setStream(remoteStream);
-      if (videoRef.current) videoRef.current.srcObject = remoteStream;
-      setIsConnected(true);
-      setIsHost(false);
-      setStatus('تەماشاکردن...');
-      setLoading(false);
-    });
-
-    call.on('error', (err) => {
-      console.error(err);
-      setStatus('هەڵە ڕوویدا لە پەیوەستبوون');
-      setLoading(false);
-    });
-  };
-
-  // -- AI FUNCTION --
 
   const handleAiCheck = async () => {
     if (!canvasRef.current || !videoRef.current) return;
-    setStatus('AI خەریکی سەیرکردنە...');
+    setAiResponse('...خەریکی شیکردنەوە');
     const ctx = canvasRef.current.getContext('2d');
     canvasRef.current.width = videoRef.current.videoWidth;
     canvasRef.current.height = videoRef.current.videoHeight;
     ctx?.drawImage(videoRef.current, 0, 0);
     const imgData = canvasRef.current.toDataURL('image/jpeg');
     
-    const text = await analyzeScreen(imgData, "بە کوردی سۆرانی، پێم بڵێ چی لەم شاشەیە هەیە و چی بکەم؟");
+    const text = await analyzeScreen(imgData, "بە کوردی سۆرانی، ئەمە چییە لە وێنەکەدا؟");
     setAiResponse(text || "هیچ دیار نییە");
-    setStatus(isConnected ? 'پەیوەستە' : 'ئامادەیە');
   };
 
-  // -- RENDER --
-
+  // --- RENDER: CONNECTED MODE (VIDEO ON) ---
   if (isConnected) {
     return (
-      <div className="h-screen w-full bg-black relative flex flex-col">
+      <div className="h-[100dvh] w-full bg-black relative flex flex-col overflow-hidden">
         <video 
           ref={videoRef} 
           autoPlay 
           playsInline 
-          muted={isHost} // Mute only if I am the host to prevent echo
-          className="w-full h-full object-contain flex-grow"
+          // If I am streamer, mute myself. If viewer, unmute to hear them.
+          muted={role === 'STREAMER'} 
+          className={`w-full h-full object-contain ${role === 'STREAMER' ? 'opacity-50 scale-x-[-1]' : ''}`} // Mirror effect for streamer
         />
         
-        {/* Controls Overlay */}
-        <div className="absolute bottom-0 w-full p-6 bg-gradient-to-t from-black/90 to-transparent flex flex-col gap-4">
+        {role === 'STREAMER' && (
+             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <p className="bg-red-600/80 text-white px-6 py-2 rounded-full font-bold animate-pulse">
+                    <i className="fas fa-circle text-[10px] ml-2"></i> پەخشی ڕاستەوخۆ
+                </p>
+             </div>
+        )}
+
+        <div className="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent flex flex-col gap-3">
             {aiResponse && (
-                <div className="bg-slate-800/90 p-3 rounded-xl text-sm text-white border border-white/20 animate-bounce-in">
-                    <span className="text-blue-400 font-bold">AI: </span> {aiResponse}
+                <div className="bg-slate-800/95 p-4 rounded-2xl text-sm text-white border border-white/10 shadow-xl max-h-40 overflow-y-auto" dir="rtl">
+                    <span className="text-blue-400 font-bold ml-2">وەڵامی AI:</span> {aiResponse}
                 </div>
             )}
             
-            <div className="flex justify-center gap-4">
-                <button onClick={handleAiCheck} className="flex-1 bg-purple-600 py-3 rounded-full font-bold shadow-lg active:scale-95 transition-transform">
-                    <i className="fas fa-magic ml-2"></i> شیکردنەوەی AI
-                </button>
-                <button onClick={() => window.location.reload()} className="w-14 bg-red-600 rounded-full flex items-center justify-center font-bold shadow-lg">
-                    <i className="fas fa-times"></i>
-                </button>
-            </div>
-            
-            {isHost && (
-                <div className="text-center">
-                    <button onClick={copyLink} className="text-blue-400 text-sm underline">
-                        <i className="fas fa-link ml-1"></i> کۆپیکردنی لینک بۆ کەسی تر
+            {role === 'VIEWER' && (
+                <div className="flex gap-3">
+                    <button onClick={handleAiCheck} className="flex-1 bg-indigo-600 active:bg-indigo-700 text-white py-4 rounded-2xl font-bold shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
+                        <i className="fas fa-wand-magic-sparkles"></i>
+                        <span>پرسیار لە AI</span>
                     </button>
                 </div>
             )}
+
+            <button onClick={() => window.location.reload()} className="w-full bg-red-500/20 text-red-500 border border-red-500/50 py-3 rounded-2xl flex items-center justify-center font-bold active:bg-red-600 active:text-white transition-colors">
+                پچڕاندن
+            </button>
         </div>
         <canvas ref={canvasRef} className="hidden" />
       </div>
     );
   }
 
+  // --- RENDER: SETUP MODE ---
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
-      <div className="max-w-md w-full space-y-8">
+    <div className="min-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center p-6 text-center font-sans">
+      <div className="w-full max-w-sm space-y-8 animate-fade-in">
         
-        <div className="space-y-2">
-          <div className="w-20 h-20 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center shadow-blue-500/50 shadow-lg">
-             <i className="fas fa-mobile-alt text-4xl"></i>
-          </div>
-          <h1 className="text-3xl font-bold mt-4">LinkUp Direct</h1>
-          <p className="text-slate-400 text-sm">{status}</p>
+        <div className="flex flex-col items-center gap-2">
+           <h1 className="text-3xl font-bold text-white tracking-tight">LinkUp Direct</h1>
+           <p className="text-slate-500 text-xs font-mono">{myId ? 'Connected' : 'Connecting...'}</p>
         </div>
 
-        {remoteId ? (
-          // Mode: Join via Link
-          <div className="bg-slate-800 p-6 rounded-3xl border border-white/10 animate-fade-in">
-             <p className="text-slate-300 mb-4">تۆ بانگێشت کراویت بۆ بینینی شاشە</p>
-             <button 
-                onClick={connectToHost}
-                disabled={loading}
-                className="w-full bg-green-600 hover:bg-green-500 py-4 rounded-xl font-bold text-lg shadow-lg transition-all active:scale-95"
-             >
-                {loading ? '...جێبەجێکردن' : 'پەیوەستبوون (View)'}
-             </button>
-          </div>
-        ) : (
-          // Mode: Main Menu
-          <div className="grid grid-cols-1 gap-4">
-            <button 
-                onClick={startHosting}
-                disabled={loading}
-                className="group relative overflow-hidden bg-blue-600 hover:bg-blue-500 p-6 rounded-3xl transition-all active:scale-95 text-right"
-            >
-                <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-r from-transparent to-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                <i className="fas fa-broadcast-tower text-3xl mb-2 block opacity-80"></i>
-                <span className="text-xl font-bold block">شاشەکەم بڵاوبکەوە</span>
-                <span className="text-xs text-blue-200 opacity-70">من دەمەوێت شاشە یان کامێرا نیشان بدەم</span>
-            </button>
+        {role === 'VIEWER' ? (
+            // --- VIEWER UI (Create Link) ---
+            <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-6 shadow-2xl">
+                <div className="w-20 h-20 bg-blue-600/20 text-blue-500 rounded-full flex items-center justify-center mx-auto ring-4 ring-blue-500/10">
+                    <i className="fas fa-eye text-3xl"></i>
+                </div>
+                <div className="space-y-2">
+                    <h2 className="text-xl font-bold text-white">داواکردنی کامێرا</h2>
+                    <p className="text-slate-400 text-sm">ئەم لینکە بنێرە بۆ ئەو کەسەی دەتەوێت کامێراکەی ببینیت.</p>
+                </div>
+                
+                <button 
+                    onClick={copyLink}
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold text-lg shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                    <i className="fas fa-share-nodes"></i>
+                    ناردنی لینک
+                </button>
 
-            <div className="bg-slate-800 p-6 rounded-3xl border border-white/5 text-right">
-                <label className="text-xs text-slate-400 block mb-2 mr-1">کۆدی بەرامبەر (ئەگەر لینک نییە):</label>
-                <div className="flex gap-2">
-                    <input 
-                        type="text" 
-                        placeholder="کۆد لێرە بنووسە" 
-                        value={remoteId}
-                        onChange={e => setRemoteId(e.target.value)}
-                        className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 text-center focus:border-blue-500 outline-none"
-                    />
-                    <button 
-                        onClick={connectToHost}
-                        className="w-14 bg-slate-700 rounded-xl flex items-center justify-center hover:bg-slate-600"
-                    >
-                        <i className="fas fa-arrow-left"></i>
-                    </button>
+                <div className="pt-4 border-t border-white/5">
+                    <p className="text-xs text-slate-500 animate-pulse">چاوەڕێی هاتنی پەخش...</p>
                 </div>
             </div>
-          </div>
-        )}
+        ) : (
+            // --- STREAMER UI (Accept Request) ---
+            <div className="bg-slate-900 border border-red-500/20 rounded-3xl p-6 space-y-6 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-1 bg-red-500"></div>
+                
+                <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto animate-bounce">
+                    <i className="fas fa-video text-3xl"></i>
+                </div>
 
-        <div className="text-xs text-slate-600 mt-10">
-            تێبینی: بۆ ئەوەی کار بکات، دەبێت ئینتەرنێت هەبێت.
-        </div>
+                <div className="space-y-2">
+                    <h2 className="text-xl font-bold text-white">داواکاری بینین</h2>
+                    <p className="text-slate-300 text-sm leading-relaxed">
+                        بەرامبەر دەیەوێت کامێراکەت ببینێت. ڕازی دەبیت؟
+                    </p>
+                </div>
+
+                <button 
+                    onClick={acceptAndStream}
+                    disabled={loading}
+                    className="w-full bg-green-600 hover:bg-green-500 text-white py-4 rounded-2xl font-bold text-lg shadow-lg shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                    {loading ? (
+                        <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>
+                    ) : (
+                        <>
+                            <i className="fas fa-check"></i>
+                            قبوڵکردن و کردنەوە
+                        </>
+                    )}
+                </button>
+                <p className="text-[10px] text-slate-500">بە داگرتنی ئەمە، کامێراکەت دەکرێتەوە</p>
+            </div>
+        )}
 
       </div>
       <canvas ref={canvasRef} className="hidden" />
