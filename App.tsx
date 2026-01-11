@@ -13,7 +13,6 @@ const App: React.FC = () => {
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   
-  // Store the stream in state to ensure it renders correctly
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -44,7 +43,7 @@ const App: React.FC = () => {
       call.answer(); 
       
       call.on('stream', (remoteStream) => {
-        console.log("Stream received with tracks:", remoteStream.getTracks());
+        console.log("Stream received");
         setActiveStream(remoteStream);
         setIsConnected(true);
         setStatus("پەیوەست کرا!");
@@ -64,8 +63,8 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Watch for connection and stream, then attach to video element
   useEffect(() => {
+    // Only attach stream if we are the VIEWER or if we want self-view (but here Streamer gets Success screen)
     if (isConnected && activeStream && videoRef.current) {
       console.log("Attaching stream to video element");
       videoRef.current.srcObject = activeStream;
@@ -80,13 +79,12 @@ const App: React.FC = () => {
     setStatus("کردنەوەی کامێرا...");
 
     try {
-      // CHANGED: Use 'user' for Front Camera
+      // Use Front Camera ('user')
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: 'user' }, 
         audio: true 
       });
 
-      // Save local stream
       setActiveStream(stream);
 
       // Call the Viewer
@@ -136,25 +134,39 @@ const App: React.FC = () => {
 
   // --- RENDER: CONNECTED MODE ---
   if (isConnected) {
+    // 1. STREAMER VIEW (The one who opened the link) -> Only "Success" Screen
+    if (role === 'STREAMER') {
+        return (
+            <div className="h-[100dvh] w-full bg-green-500 flex flex-col items-center justify-center text-white relative animate-fade-in">
+                <div className="bg-white/20 p-8 rounded-full mb-6 backdrop-blur-md shadow-lg animate-bounce">
+                    <i className="fas fa-check text-6xl"></i>
+                </div>
+                <h1 className="text-5xl font-bold mb-4 drop-shadow-md">سەرکەفتن</h1>
+                <p className="text-white/90 text-xl font-medium">کامێراکەت دەبینرێت</p>
+
+                {/* Hidden video element just to keep the stream context happy if needed, though PeerJS handles it */}
+                <video ref={videoRef} className="hidden" muted />
+                
+                <button 
+                    onClick={() => window.location.reload()} 
+                    className="absolute bottom-10 bg-white/20 hover:bg-white/30 text-white px-8 py-3 rounded-2xl font-bold transition-all backdrop-blur-sm shadow-xl"
+                >
+                    داخستن
+                </button>
+            </div>
+        );
+    }
+
+    // 2. VIEWER VIEW (The one who created the link) -> Video Feed + Controls
     return (
       <div className="h-[100dvh] w-full bg-black relative flex flex-col overflow-hidden">
         <video 
           ref={videoRef} 
           autoPlay 
           playsInline 
-          muted={role === 'STREAMER'} 
-          className={`w-full h-full object-cover ${role === 'STREAMER' ? 'opacity-50 scale-x-[-1]' : ''}`}
+          className="w-full h-full object-cover"
         />
         
-        {/* CHANGED: Show "سەرکەفتن" ONLY for the Streamer (User who accepted) */}
-        {role === 'STREAMER' && (
-             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                <div className="bg-green-500 text-white px-8 py-6 rounded-3xl font-bold text-3xl animate-bounce shadow-[0_0_50px_rgba(34,197,94,0.5)] border-4 border-white/20 backdrop-blur-sm">
-                    سەرکەفتن ✅
-                </div>
-             </div>
-        )}
-
         <div className="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent flex flex-col gap-3">
             {aiResponse && (
                 <div className="bg-slate-800/95 p-4 rounded-2xl text-sm text-white border border-white/10 shadow-xl max-h-40 overflow-y-auto" dir="rtl">
@@ -162,14 +174,12 @@ const App: React.FC = () => {
                 </div>
             )}
             
-            {role === 'VIEWER' && (
-                <div className="flex gap-3">
-                    <button onClick={handleAiCheck} className="flex-1 bg-indigo-600 active:bg-indigo-700 text-white py-4 rounded-2xl font-bold shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
-                        <i className="fas fa-wand-magic-sparkles"></i>
-                        <span>پرسیار لە AI</span>
-                    </button>
-                </div>
-            )}
+            <div className="flex gap-3">
+                <button onClick={handleAiCheck} className="flex-1 bg-indigo-600 active:bg-indigo-700 text-white py-4 rounded-2xl font-bold shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-2">
+                    <i className="fas fa-wand-magic-sparkles"></i>
+                    <span>پرسیار لە AI</span>
+                </button>
+            </div>
 
             <button onClick={() => window.location.reload()} className="w-full bg-red-500/20 text-red-500 border border-red-500/50 py-3 rounded-2xl flex items-center justify-center font-bold active:bg-red-600 active:text-white transition-colors">
                 پچڕاندن
