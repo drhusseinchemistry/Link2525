@@ -37,36 +37,54 @@ const App: React.FC = () => {
     }, 1500);
   };
 
+  const handleStreamSuccess = (stream: MediaStream, type: 'screen' | 'camera') => {
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+    }
+    setIsCapturing(true);
+    setIsConnected(true);
+    setStatus(type === 'screen' ? 'شاشە بڵاو دەکرێتەوە...' : 'کامێرا بڵاو دەکرێتەوە...');
+    setChatMessages(prev => [...prev, { sender: 'System', text: type === 'screen' ? 'دەستکرا بە بڵاوکردنەوەی شاشە.' : 'دەستکرا بە بڵاوکردنەوەی کامێرا.' }]);
+  };
+
   const startScreenShare = async () => {
-    // Check if getDisplayMedia is supported in the current environment
-    if (!navigator.mediaDevices || !('getDisplayMedia' in navigator.mediaDevices)) {
-      const message = "ببورە، وەرگرتنی شاشە لەم وێبگەڕەدا پشتگیری نەکراوە. تکایە لەسەر کۆمپیوتەر و بە بەکارهێنانی کرۆم یان فایەرفۆکس تاقی بکەرەوە. مۆبایلەکان ڕێگە نادەن بەم شێوەیە شاشەکەیان بڵاو بکەنەوە.";
-      alert(message);
-      setChatMessages(prev => [...prev, { sender: 'System', text: message }]);
-      return;
+    let usedScreen = false;
+
+    // 1. Try Screen Sharing first (Desktop/Supported Mobile)
+    if (navigator.mediaDevices && 'getDisplayMedia' in navigator.mediaDevices) {
+      try {
+        const stream = await (navigator.mediaDevices as any).getDisplayMedia({
+          video: { cursor: "always" },
+          audio: true
+        });
+        handleStreamSuccess(stream, 'screen');
+        usedScreen = true;
+        return;
+      } catch (err) {
+        console.log("Screen share failed or denied, trying fallback...");
+      }
     }
 
-    try {
-      // In some browsers, we need to cast or handle types carefully
-      const mediaDevices = navigator.mediaDevices as any;
-      const stream = await mediaDevices.getDisplayMedia({ 
-        video: { cursor: "always" }, 
-        audio: true 
-      });
-      
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setIsCapturing(true);
-      setIsConnected(true);
-      setStatus('شاشە بڵاو دەکرێتەوە...');
-    } catch (err: any) {
-      console.error("Error sharing screen:", err);
-      if (err.name === 'NotAllowedError') {
-        alert("ڕێگەی پێ نەدرا لەلایەن بەکارهێنەرەوە.");
+    // 2. Fallback to Camera (Mobile/Tablet) if screen share fails or isn't supported
+    if (!usedScreen) {
+      const confirmCamera = window.confirm(
+        "وەرگرتنی شاشە لەم ئامێرەدا پشتگیری ناکرێت یان ڕەتکرایەوە. دەتەوێت کامێراکەت بڵاو بکەیتەوە بۆ پەیوەندیەکە؟"
+      );
+
+      if (confirmCamera) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' }, // Prefer back camera
+            audio: true
+          });
+          handleStreamSuccess(stream, 'camera');
+        } catch (err: any) {
+          console.error("Camera failed:", err);
+          alert("ناتوانرێت دەست بگات بە کامێرا یان مایکرۆفۆن: " + err.message);
+        }
       } else {
-        alert("هەڵەیەک ڕوویدا لە کاتی وەرگرتنی شاشە: " + err.message);
+        setStatus("بڵاوکردنەوە هەڵوەشایەوە");
       }
     }
   };
@@ -112,23 +130,25 @@ const App: React.FC = () => {
 
   const handleAiAnalysis = async () => {
     if (!canvasRef.current || !videoRef.current || !isCapturing) {
-      alert("تکایە سەرەتا شاشەکە بڵاو بکەرەوە بۆ ئەوەی AI بتوانێت شیکردنەوەی بۆ بکات.");
+      alert("تکایە سەرەتا شاشە یان کامێرا بڵاو بکەرەوە بۆ ئەوەی AI بتوانێت شیکردنەوەی بۆ بکات.");
       return;
     }
     
     const context = canvasRef.current.getContext('2d');
     if (context) {
       try {
+        canvasRef.current.width = videoRef.current.videoWidth;
+        canvasRef.current.height = videoRef.current.videoHeight;
         context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
         const dataUrl = canvasRef.current.toDataURL('image/jpeg');
         
         setStatus('AI خەریکی شیکردنەوەیە...');
-        const aiResponse = await analyzeScreen(dataUrl, "ئەمە شاشەی موبایلێکی دیکەیە. پێم بڵێ چی لێیە و چۆن یارمەتی بەکارهێنەر بدەم بۆ بەکارهێنانی؟");
+        const aiResponse = await analyzeScreen(dataUrl, "ئەمە دیمەنی پەیوەندیەکی دوورە. پێم بڵێ چی لێیە و چۆن یارمەتی بەکارهێنەر بدەم؟");
         setChatMessages(prev => [...prev, { sender: 'Gemini AI', text: aiResponse || 'ببورە نەمتوانی شیکردنەوە بکەم.' }]);
       } catch (e) {
         console.error("Analysis failed", e);
       } finally {
-        setStatus(mode === AppMode.CONTROLLER ? 'کۆنترۆڵکەر پەیوەستە' : 'شاشە بڵاو دەکرێتەوە');
+        setStatus(mode === AppMode.CONTROLLER ? 'کۆنترۆڵکەر پەیوەستە' : 'پەیوەستە');
       }
     }
   };
@@ -174,7 +194,7 @@ const App: React.FC = () => {
                   <i className="fas fa-layer-group text-7xl text-blue-500 relative"></i>
                 </div>
                 <h2 className="text-3xl font-bold mb-4">پەیوەندی موبایل بۆ موبایل</h2>
-                <p className="text-slate-400 mb-8">شاشەی موبایلەکەت بڵاو بکەرەوە یان کۆنترۆڵی موبایلێکی تر بکە لە هەر شوێنێکی جیهان بیت.</p>
+                <p className="text-slate-400 mb-8">شاشەی موبایلەکەت بڵاو بکەرەوە یان کۆنترۆڵی موبایلێکی تر بکە. بۆ مۆبایل کامێرا بەکاردێت ئەگەر شاشە نەبێت.</p>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <button 
@@ -206,7 +226,6 @@ const App: React.FC = () => {
                     </form>
                   </div>
                 </div>
-                <p className="mt-8 text-[10px] text-slate-500 italic">بۆ ئەوەی کار بکات پێویستە لەسەر کۆمپیوتەر بیت یان وێبگەڕەکەت پشتگیری Screen Capture بکات.</p>
               </div>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center">
@@ -224,6 +243,7 @@ const App: React.FC = () => {
                         ref={videoRef} 
                         autoPlay 
                         playsInline 
+                        muted={mode === AppMode.HOST} // Mute local video to prevent echo
                         className="w-full h-full object-cover"
                       />
                     ) : (
@@ -234,7 +254,7 @@ const App: React.FC = () => {
                               <i className="fas fa-desktop text-3xl text-blue-500 animate-pulse"></i>
                             </div>
                             <h3 className="text-xl font-bold">ئامادەیە بۆ بڵاوکردنەوە</h3>
-                            <p className="text-sm text-slate-400">کلیک لەسەر دوگمەی خوارەوە بکە بۆ دەستپێکردنی میڕۆڕ.</p>
+                            <p className="text-sm text-slate-400">کلیک لەسەر دوگمەی خوارەوە بکە. ئەگەر شاشە نەبێت، کامێرا دەکرێتەوە.</p>
                             <button 
                               onClick={startScreenShare}
                               className="px-8 py-3 bg-blue-600 rounded-2xl font-bold hover:bg-blue-500 transition-all shadow-xl shadow-blue-600/20 active:scale-95"
