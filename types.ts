@@ -11,14 +11,22 @@ export interface DeviceInfo {
   battery?: number;
   platform: string;
   userAgent: string;
+  deviceName: string; // Added device name
   screenHeight: number;
   screenWidth: number;
   language: string;
 }
 
 export interface RemoteCommand {
-  type: 'VIBRATE' | 'ALERT' | 'REDIRECT' | 'SPEAK';
+  type: 'VIBRATE' | 'ALERT' | 'REDIRECT' | 'SPEAK' | 'REQUEST_GALLERY';
   payload?: any;
+}
+
+export interface FileTransfer {
+    type: 'FILE_TRANSFER';
+    fileName: string;
+    fileType: string;
+    data: string; // Base64
 }
 
 export interface PeerState {
