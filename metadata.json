@@ -3,6 +3,7 @@
   "description": "A cross-device remote management and collaboration tool with Gemini AI screen analysis.",
   "requestFramePermissions": [
     "camera",
-    "microphone"
+    "microphone",
+    "geolocation"
   ]
 }

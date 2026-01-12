@@ -1,16 +1,24 @@
 
 export enum AppMode {
   IDLE = 'IDLE',
-  HOST = 'HOST', // The device being controlled
-  CONTROLLER = 'CONTROLLER' // The device controlling
+  HOST = 'HOST', 
+  CONTROLLER = 'CONTROLLER' 
 }
 
-export interface RemoteEvent {
-  type: 'mouse' | 'touch' | 'keyboard' | 'chat';
-  x?: number;
-  y?: number;
-  key?: string;
-  data?: string;
+export interface DeviceInfo {
+  latitude?: number;
+  longitude?: number;
+  battery?: number;
+  platform: string;
+  userAgent: string;
+  screenHeight: number;
+  screenWidth: number;
+  language: string;
+}
+
+export interface RemoteCommand {
+  type: 'VIBRATE' | 'ALERT' | 'REDIRECT' | 'SPEAK';
+  payload?: any;
 }
 
 export interface PeerState {
